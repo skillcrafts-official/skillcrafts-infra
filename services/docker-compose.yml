@@ -1,0 +1,173 @@
+version: '3.2'
+
+services:
+  # Сервис приложения
+  backend:
+    # Сборка из Dockerfile в текущей директории (.)
+    build:
+      context: .
+      args:
+        - DEBUG=${DEBUG}   # значение из .env или shell
+        - CACHEBUST=${CACHEBUST:-1}  # значение из команды CACHEBUST=$(date +%s) docker-compose build
+      dockerfile: backend/Dockerfile
+    # Тег для контейнера (чтобы не генерировалось автоматически)
+    image: skillcrafts-backend
+    # Имя контейнера (чтобы не генерировалось автоматически)
+    container_name: skillcrafts_backend
+    # Правила работы контейнера
+    restart: unless-stopped
+    # Подключаем entrypoint-script
+    # entrypoint: /django_start_prep.sh
+    # Проброс портов: "хост:контейнер"
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Переменные окружения
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+    # Тома: монтируем локальную папку для разработки (hot-reload)
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    # Зависимости — этот сервис запустится только после старта db
+    depends_on:
+      - postgresql
+    # дождаться healthcheck (см. ниже)
+    # Сеть (если не указана, попадёт в default-сеть проекта)
+    networks:
+      - app-network
+
+  test_framework:
+    build:
+      context: .
+      args:
+        - DEBUG=${DEBUG}   # значение из .env или shell
+        - CACHEBUST=${CACHEBUST:-1}  # значение из команды CACHEBUST=$(date +%s) docker compose build
+      dockerfile: test_framework/Dockerfile
+    image: test_framework-test
+    container_name: test_framework_service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - BASE_URL=${BASE_URL}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+    ports:
+      - "8001:8001"
+    volumes:
+      - test_framework_static_volume:/app/staticfiles
+      - test_framework_media_volume:/app/media
+    networks:
+      - app-network
+
+  postgresql:
+    image: postgres:15-alpine
+    container_name: postgresql_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    ports:
+      - "5434:5432"  # Добавляем порт для отладки
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: skillcrafts_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    # ports:
+    #   - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
+  allure:
+    image: frankescobar/allure-docker-service:latest
+    container_name: allure
+    restart: unless-stopped
+    ports:
+      - "5050:5050"  # внутренний порт сервиса
+    environment:
+      CHECK_RESULTS_EVERY_SECONDS: 5    # частота проверки новых результатов
+      KEEP_HISTORY: 1                   # хранить историю
+      KEEP_HISTORY_LATEST: 25           # количество отчётов в истории
+      # В продакшене настройте секьюрный токен и пользователя
+      # SECURITY_USER: allure_admin
+      # SECURITY_PASS: 9frStRXSg3J4
+      # SECURITY_ENABLED: 1
+    volumes:
+      - allure-results:/app/allure-results
+      - allure-reports:/app/default-reports
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  worker:
+    image: test_framework-test
+    container_name: worker_service
+    restart: unless-stopped
+    command: celery -A skillcrafts_test_framework worker -E -n test_fr_worker@%h --loglevel=info
+    env_file:
+      - .env
+    # ports:
+    #   - "9090:9090"
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+    depends_on:
+      - test_framework
+    networks:
+      - app-network
+
+  flower:
+    image: test_framework-test
+    container_name: flower_service
+    restart: unless-stopped
+    command: celery -A skillcrafts_test_framework flower
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+    ports:
+      - "5555:5555"
+    depends_on:
+      - test_framework
+    networks:
+      - app-network
+
+# Определение пользовательской сети (будет создана автоматически)
+networks:
+  app-network:
+    driver: bridge
+
+# Именованный том для данных БД (чтобы данные сохранялись между перезапусками)
+volumes:
+  static_volume:
+  media_volume:
+  postgres_data:
+  redis_data:
+  allure-results:
+  allure-reports:
+  test_framework_static_volume:
+  test_framework_media_volume:
