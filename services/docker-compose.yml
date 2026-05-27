@@ -43,12 +43,12 @@ services:
       - app-network
 
   test_framework:
-    build:
-      context: .
-      args:
-        - DEBUG=${DEBUG}   # значение из .env или shell
-        - CACHEBUST=${CACHEBUST:-1}  # значение из команды CACHEBUST=$(date +%s) docker compose build
-      dockerfile: test_framework/Dockerfile
+    # build:
+    #   context: .
+    #   args:
+    #     - DEBUG=${DEBUG}   # значение из .env или shell
+    #     - CACHEBUST=${CACHEBUST:-1}  # значение из команды CACHEBUST=$(date +%s) docker compose build
+    #   dockerfile: test_framework/Dockerfile
     image: test_framework-test
     container_name: test_framework_service
     restart: unless-stopped
@@ -134,6 +134,8 @@ services:
     environment:
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
+    volumes:
+      - test_framework_media_volume:/app/media
     depends_on:
       - test_framework
     networks:
